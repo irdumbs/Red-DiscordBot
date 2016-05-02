@@ -59,6 +59,7 @@ class Audio:
         self.skip_votes = []
         self.cleanup_timer = int(time.perf_counter())
         self.past_titles = [] # This is to prevent the audio module from setting the status to None if a status other than a track's title gets set
+        self.voice_server = None
 
         self.sing =  ["https://www.youtube.com/watch?v=zGTkAVsrfg8", "https://www.youtube.com/watch?v=cGMWL8cOeAU",
                      "https://www.youtube.com/watch?v=vFrjMq4aL-g", "https://www.youtube.com/watch?v=WROI5WYBU_A",
@@ -243,7 +244,7 @@ class Audio:
                         if self.sfx_player.is_playing():
                             self.sfx_player.stop()
 
-                        self.sfx_player = self.bot.voice.create_ffmpeg_player(file, use_avconv=self.settings["AVCONV"],options='''-filter "volume=volume={}"'''.format(self.settings["VOLUME"]))
+                        self.sfx_player = server.voice_client.create_ffmpeg_player(file, use_avconv=self.settings["AVCONV"],options='''-filter "volume=volume={}"'''.format(self.settings["VOLUME"]))
                         self.sfx_player.start()
                         while self.sfx_player.is_playing():
                             await asyncio.sleep(.5)
@@ -330,20 +331,20 @@ class Audio:
         msg = ctx.message
         if self.music_player.is_playing() or self.sfx_player.is_playing():
             if await self.is_alone_or_admin(msg):
-                await self.close_audio()
+                await self.close_audio(msg.server)
             else:
                 await self.bot.say("You can't stop music when there are other people in the channel! Vote to skip instead.")
         else:
-            await self.close_audio()
+            await self.close_audio(msg.server)
 
-    async def close_audio(self):
+    async def close_audio(self, server):
         self.queue = []
         self.playlist = []
         self.current = -1
         if not self.music_player.is_done(): self.music_player.stop()
         if not self.sfx_player.is_done(): self.sfx_player.stop()
         await asyncio.sleep(1)
-        if self.bot.voice: await self.bot.voice.disconnect()
+        if server.voice_client: await server.voice_client.disconnect()
 
     @commands.command(name="queue", pass_context=True, no_pm=True) #check that author is in the same channel as the bot
     async def _queue(self, ctx, *link : str):
@@ -668,7 +669,7 @@ class Audio:
                 while self.sfx_player.is_playing():
                     await asyncio.sleep(.5)
                 if not self.music_player.is_done(): self.music_player.stop()
-                self.music_player = self.bot.voice.create_ffmpeg_player(path + self.downloader["ID"],use_avconv=self.settings["AVCONV"], options='''-filter "volume=volume={}"'''.format(self.settings["VOLUME"]))
+                self.music_player = self.voice_server.create_ffmpeg_player(path + self.downloader["ID"],use_avconv=self.settings["AVCONV"], options='''-filter "volume=volume={}"'''.format(self.settings["VOLUME"]))
                 self.music_player.paused = False
                 self.music_player.start()
                 if path != "" and self.settings["TITLE_STATUS"]:
@@ -686,8 +687,9 @@ class Audio:
 
 
     async def check_voice(self, author, message):
-        if self.bot.is_voice_connected():
-            v_channel = self.bot.voice.channel
+        if message.server.voice_client is not None and message.server.voice_client.is_connected():
+            self.voice_server = message.server.voice_client
+            v_channel = self.voice_server.channel
             if author.voice_channel == v_channel:
                 return True
             elif len(v_channel.voice_members) == 1:
@@ -695,6 +697,7 @@ class Audio:
                     if author.voice_channel.permissions_for(message.server.me).connect:
                         wait = await self.close_audio()
                         await self.bot.join_voice_channel(author.voice_channel)
+                        self.voice_server = message.server.voice_client
                         return True
                     else:
                         await self.bot.say("I need permissions to join that voice channel.")
@@ -711,6 +714,7 @@ class Audio:
         elif author.voice_channel:
             if author.voice_channel.permissions_for(message.server.me).connect:
                 await self.bot.join_voice_channel(author.voice_channel)
+                self.voice_server = message.server.voice_client
                 return True
             else:
                 await self.bot.say("I need permissions to join that voice channel.")
